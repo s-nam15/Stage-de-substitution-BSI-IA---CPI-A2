@@ -41,7 +41,7 @@ mapping = {
     "PEACE": "v_de_la_victoire",
 }
 
-CONFIDENCE_THRESHOLD = 0.65
+CONFIDENCE_THRESHOLD = 0.7
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 MODEL_PATH = os.path.join(BASE_DIR, "gesture_model.pkl")
