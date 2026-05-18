@@ -41,6 +41,8 @@ mapping = {
     "PEACE": "v_de_la_victoire",
 }
 
+CONFIDENCE_THRESHOLD = 0.65
+
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 MODEL_PATH = os.path.join(BASE_DIR, "gesture_model.pkl")
 IMG_DIR = os.path.join(BASE_DIR, "img")
@@ -53,23 +55,56 @@ else:
     print(f"❌ Modèle introuvable à : {MODEL_PATH}")
     exit()
 
-# Chargement Images
+# Chargement Images avec cv2.IMREAD_UNCHANGED pour garder le canal Alpha (transparence)
 gesture_images = {}
 for ml_label, file_name in mapping.items():
     path = os.path.join(IMG_DIR, f"{file_name}.png")
-    img = cv2.imread(path)
+    img = cv2.imread(path, cv2.IMREAD_UNCHANGED) # CRUCIAL pour la transparence
     if img is not None:
         gesture_images[ml_label] = img
 
-def overlay_emoji(frame, img, x, y, size=120):
-    if img is None: return
+def overlay_emoji_transparent(frame, emoji_img, x, y, size=120):
+    """ Incruste proprement une image PNG transparente (BGRA) sur le flux vidéo (BGR) """
+    if emoji_img is None: return
+    
     try:
-        img_res = cv2.resize(img, (size, size))
-        h, w, _ = img_res.shape
-        y1, y2 = max(0, y), min(frame.shape[0], y + h)
-        x1, x2 = max(0, x), min(frame.shape[1], x + w)
-        frame[y1:y2, x1:x2] = img_res[0:y2-y1, 0:x2-x1]
-    except: pass
+        # 1. Redimensionner l'émoji
+        emoji_res = cv2.resize(emoji_img, (size, size), interpolation=cv2.INTER_AREA)
+        
+        # 2. Définir les zones de découpe en gérant les bords de l'écran
+        h_f, w_f, _ = frame.shape
+        y1, y2 = max(0, y), min(h_f, y + size)
+        x1, x2 = max(0, x), min(w_f, x + size)
+        
+        # Ajuster l'image de l'émoji si elle dépasse de l'écran
+        img_y1, img_y2 = 0 + (y1 - y), size - (y + size - y2)
+        img_x1, img_x2 = 0 + (x1 - x), size - (x + size - x2)
+        
+        if (y2 - y1) <= 0 or (x2 - x1) <= 0: return
+
+        crop_emoji = emoji_res[img_y1:img_y2, img_x1:img_x2]
+        crop_frame = frame[y1:y2, x1:x2]
+
+        # 3. Séparation des canaux si l'image possède de la transparence (4 canaux)
+        if crop_emoji.shape[2] == 4:
+            alpha = crop_emoji[:, :, 3] / 255.0  # Canal alpha normalisé entre 0.0 et 1.0
+            alpha = np.expand_dims(alpha, axis=2) # Aligner les dimensions pour le calcul
+            
+            rgb_emoji = crop_emoji[:, :, :3]
+            
+            # Formule magique de l'Alpha Blending : (Emoji * Alpha) + (Caméra * (1 - Alpha))
+            blended = rgb_emoji * alpha + crop_frame * (1.0 - alpha)
+            frame[y1:y2, x1:x2] = blended.astype(np.uint8)
+        else:
+            # Si pas de canal alpha, affichage normal
+            frame[y1:y2, x1:x2] = crop_emoji
+
+    except Exception as e:
+        pass
+
+# Variables pour l'amortissement du mouvement (évite les tremblements de l'émoji)
+smooth_x, smooth_y = 0, 0
+is_first_frame = True
 
 mp_hands = mp.solutions.hands
 hands = mp_hands.Hands(max_num_hands=2, min_detection_confidence=0.7)
@@ -97,29 +132,59 @@ while True:
 
         if len(test_features) == 126:
             try:
-                pred = model.predict([test_features])[0]
+                probabilities = model.predict_proba([test_features])[0]
+                max_prob = np.max(probabilities)
                 
-                # On prend la position du bout de l'index (point 8) pour placer l'affichage
-                idx_x = int(result.multi_hand_landmarks[0].landmark[8].x * w_f)
-                idx_y = int(result.multi_hand_landmarks[0].landmark[8].y * h_f)
+                if max_prob >= CONFIDENCE_THRESHOLD:
+                    class_idx = np.argmax(probabilities)
+                    pred_key = model.classes_[class_idx]
+                    
+                    # Rendu du texte à partir de la traduction du dictionnaire mapping
+                    if pred_key in mapping:
+                        pred_text = mapping[pred_key].replace("_", " ").capitalize()
+                    else:
+                        pred_text = pred_key.replace("_", " ").capitalize()
+                    
+                    text_color = (0, 255, 0) # Vert pour un geste validé
+                else:
+                    pred_key = "INCONNU"
+                    pred_text = "Geste inconnu"
+                    text_color = (0, 0, 255) # Rouge pour l'inconnu
 
-                # --- REGLAGE POSITION ---
-                # On met l'emoji bien au dessus (idx_y - 180)
-                # On met le texte un peu plus bas que l'emoji pour qu'ils ne se touchent plus
-                text_y = idx_y - 40 
-                emoji_y = idx_y - 200
+                # Coordonnées brutes du bout de l'index
+                target_x = int(result.multi_hand_landmarks[0].landmark[8].x * w_f)
+                target_y = int(result.multi_hand_landmarks[0].landmark[8].y * h_f)
 
-                # Dessiner un petit rectangle noir derrière le texte pour la lisibilité
-                cv2.rectangle(frame, (idx_x - 10, text_y - 30), (idx_x + 250, text_y + 10), (0,0,0), -1)
+                # --- FILTRE DE LISSAGE (DYNAMIQUE FLUIDE) ---
+                if is_first_frame:
+                    smooth_x, smooth_y = target_x, target_y
+                    is_first_frame = False
+                else:
+                    smooth_x = int(smooth_x + 0.25 * (target_x - smooth_x))
+                    smooth_y = int(smooth_y + 0.25 * (target_y - smooth_y))
+
+                # Placement des éléments par rapport aux coordonnées lissées
+                text_y = smooth_y - 40 
+                emoji_y = smooth_y - 180
+                emoji_x = smooth_x - 60  # Centrage horizontal de l'émoji
+
+                # --- RENDU DU TEXTE STYLE REGARD NATUREL (CONTOUR NOIR + TEXTE LISSÉ) ---
+                # 1. Tracé de l'ombre/contour extérieur noir (épaisseur 5)
+                cv2.putText(frame, pred_text, (smooth_x, text_y), 
+                            cv2.FONT_HERSHEY_DUPLEX, 0.8, (0, 0, 0), 5, cv2.LINE_AA)
                 
-                # Affichage du texte en VERT
-                cv2.putText(frame, pred, (idx_x, text_y), 
-                            cv2.FONT_HERSHEY_DUPLEX, 1, (0, 255, 0), 2)
+                # 2. Tracé du texte principal en couleur (épaisseur 2) par-dessus
+                cv2.putText(frame, pred_text, (smooth_x, text_y), 
+                            cv2.FONT_HERSHEY_DUPLEX, 0.8, text_color, 2, cv2.LINE_AA)
                 
-                # Affichage Emoji
-                if pred in gesture_images:
-                    overlay_emoji(frame, gesture_images[pred], idx_x - 60, emoji_y)
-            except: pass
+                # Affichage Émoji Transparent
+                if pred_key in gesture_images:
+                    overlay_emoji_transparent(frame, gesture_images[pred_key], emoji_x, emoji_y, size=120)
+                    
+            except Exception as e: 
+                pass
+    else:
+        is_first_frame = True # Reset si la main quitte l'écran
 
     cv2.imshow("TIAGO Robot Recognition", frame)
     if cv2.waitKey(1) & 0xFF == 27: break
