@@ -20,7 +20,6 @@ mapping = {
     "PALM_DOWN": "main_paume_vers_le_bas",
     "PALM_UP": "main_paume_vers_le_haut",
     "RAISED_HAND": "main_levee",
-    "SPREAD_HAND": "main_levee_doigts_ecartes",
     "PRAY_HANDS": "mains_en_priere",
     "RAISED_HANDS": "mains_levees",
     "OPEN_HANDS": "mains_ouvertes",
