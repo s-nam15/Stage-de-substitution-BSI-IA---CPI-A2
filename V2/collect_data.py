@@ -20,6 +20,8 @@ mapping = {
     "PALM_DOWN": "main_paume_vers_le_bas",
     "PALM_UP": "main_paume_vers_le_haut",
     "RAISED_HAND": "main_levee",
+    "HAND_TO_THE_LEFT": "main_vers_la_gauche",
+    "HAND_TO_THE_RIGHT": "main_vers_la_droite",
     "PRAY_HANDS": "mains_en_priere",
     "RAISED_HANDS": "mains_levees",
     "OPEN_HANDS": "mains_ouvertes",
@@ -34,7 +36,6 @@ mapping = {
     "PINCHED_FINGERS": "pouce_et_index_rapproches",
     "THUMBS_DOWN": "pouce_vers_le_bas",
     "THUMBS_UP": "pouce_vers_le_haut",
-    "VULCAN": "salut_vulcain",
     "CALL_ME": "signe_appel_telephonique_avec_les_doigts",
     "PEACE": "v_de_la_victoire",
 }
